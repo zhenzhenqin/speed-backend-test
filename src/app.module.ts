@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';  // 环境变量模块
 import { MongooseModule } from '@nestjs/mongoose';  // MongoDB模块
 import { ArticleModule } from './article/article.module';  // 文章模块
 import { UserModule } from './user/user.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { UserModule } from './user/user.module';
     // 引入文章模块（核心业务模块）
     ArticleModule,
     UserModule,
+    AuthModule,
   ],
 })
 export class AppModule {}
