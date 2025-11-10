@@ -1,50 +1,40 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, ConflictException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Article, ArticleDocument } from './article.schema';
 import { CreateArticleDto } from './dto/create-article.dto';
 import { SearchArticleDto } from './dto/search-article.dto';
+import { ReviewArticleDto, ReviewStatus, AnalyzeStatus } from './dto/review-article.dto';
 
 @Injectable()
 export class ArticleService {
-  // 注入Article模型（Nest.js依赖注入，作业“代码工艺”要求）
   constructor(@InjectModel(Article.name) private articleModel: Model<ArticleDocument>) {}
 
   /**
-   * 1. 提交文章（用户功能，作业核心需求）
+   * 提交文章（普通用户/版主/分析师/管理员）
    */
-  async create(createArticleDto: CreateArticleDto): Promise<Article> {
-    try {
-      // 创建新文章（自动添加reviewStatus: pending）
-      const newArticle = new this.articleModel(createArticleDto);
-      return await newArticle.save();
-    } catch (error) {
-      // 捕获DOI重复的错误（MongoDB的unique约束触发）
-      if (error.code === 11000) {
-        throw new ConflictException('该DOI已被提交，请检查后重新提交');
-      }
-      throw error;
+  async create(createDto: CreateArticleDto): Promise<Article> {
+    // 校验DOI是否重复（非重复条件）
+    const existingArticle = await this.articleModel.findOne({ doi: createDto.doi }).exec();
+    if (existingArticle) {
+      throw new ConflictException('该DOI已被提交，请检查后重新提交（非重复校验不通过）');
     }
+
+    // 创建文章（默认待审核）
+    const newArticle = new this.articleModel(createDto);
+    const savedArticle = await newArticle.save();
+    return savedArticle.toObject();
   }
 
   /**
-   * 2. 搜索文章（用户功能，仅返回已审核通过的文章）
+   * 搜索已审核通过的文章（所有登录用户）
    */
   async search(searchDto: SearchArticleDto): Promise<Article[]> {
-    // 构建查询条件（支持模糊查询、年份范围）
-    const query: any = { reviewStatus: 'approved' };  // 只查已通过审核的
+    const query: any = { reviewStatus: ReviewStatus.APPROVED }; // 只返回已通过审核的
 
-    // 模糊查询：SE实践类型（不区分大小写）
-    if (searchDto.practiceType) {
-      query.practiceType = { $regex: searchDto.practiceType, $options: 'i' };
-    }
-
-    // 模糊查询：相关主张（不区分大小写）
-    if (searchDto.claim) {
-      query.claim = { $regex: searchDto.claim, $options: 'i' };
-    }
-
-    // 年份范围查询
+    // 拼接搜索条件
+    if (searchDto.practiceType) query.practiceType = searchDto.practiceType;
+    if (searchDto.claim) query.claim = { $regex: searchDto.claim, $options: 'i' }; // 模糊搜索
     if (searchDto.yearStart && searchDto.yearEnd) {
       query.year = { $gte: searchDto.yearStart, $lte: searchDto.yearEnd };
     } else if (searchDto.yearStart) {
@@ -53,43 +43,78 @@ export class ArticleService {
       query.year = { $lte: searchDto.yearEnd };
     }
 
-    // 执行查询，按出版年份倒序排列（最新的在前）
-    return await this.articleModel.find(query).sort({ year: -1 }).exec();
+    return this.articleModel.find(query).sort({ updatedAt: -1 }).exec();
   }
 
   /**
-   * 3. 获取待审核文章列表（版主功能，作业审核流程需求）
+   * 获取待审核文章（仅版主/管理员）
    */
   async getPendingReviews(): Promise<Article[]> {
-    return await this.articleModel.find({ reviewStatus: 'pending' }).sort({ createdAt: -1 }).exec();
+    return this.articleModel
+      .find({ reviewStatus: ReviewStatus.PENDING })
+      .sort({ createdAt: -1 }) // 按提交时间倒序
+      .exec();
   }
 
   /**
-   * 4. 审核文章（版主功能，批准/拒绝）
+   * 版主审核文章（核心功能）
    */
-  async reviewArticle(id: string, status: 'approved' | 'rejected'): Promise<Article> {
-    // 先检查文章是否存在
-    const article = await this.articleModel.findById(id).exec();
+  async reviewArticle(id: string, reviewDto: ReviewArticleDto): Promise<Article> {
+    // 1. 校验文章是否存在
+    const article = await this.articleModel.findById(id).exec() as ArticleDocument;
     if (!article) {
       throw new NotFoundException(`ID为${id}的文章不存在`);
     }
 
-    // 更新审核状态
-    article.reviewStatus = status;
-    return await article.save();
+    // 2. 校验是否已审核
+    if (article.reviewStatus !== ReviewStatus.PENDING) {
+      throw new ForbiddenException(`该文章已审核（状态：${article.reviewStatus}），无需重复操作`);
+    }
+
+    // 3. 更新审核状态和意见
+    article.reviewStatus = reviewDto.status;
+    article.reviewComment = reviewDto.comment;
+
+    // 4. 状态流转：通过→待分析；拒绝→无需分析
+    if (reviewDto.status === ReviewStatus.APPROVED) {
+      article.analyzeStatus = AnalyzeStatus.PENDING;
+    } else {
+      article.analyzeStatus = AnalyzeStatus.SKIPPED;
+    }
+
+    const updatedArticle = await article.save();
+    return updatedArticle.toObject();
   }
 
   /**
-   * 5. 用户评分（用户功能，作业要求）
+   * 文章评分（所有登录用户）
    */
   async rateArticle(id: string, rating: number): Promise<Article> {
-    const article = await this.articleModel.findById(id).exec();
+    const article = await this.articleModel.findById(id).exec() as ArticleDocument;
     if (!article) {
       throw new NotFoundException(`ID为${id}的文章不存在`);
     }
 
-    // 更新评分
+    // 只能对已通过审核的文章评分
+    if (article.reviewStatus !== ReviewStatus.APPROVED) {
+      throw new ForbiddenException('仅能对已通过审核的文章评分');
+    }
+
     article.rating = rating;
-    return await article.save();
+    const updatedArticle = await article.save();
+    return updatedArticle.toObject();
+  }
+
+  /**
+   * 查询待分析文章（仅分析师/管理员）
+   */
+  async getPendingAnalyzeArticles(): Promise<Article[]> {
+    return this.articleModel
+      .find({
+        reviewStatus: ReviewStatus.APPROVED,
+        analyzeStatus: AnalyzeStatus.PENDING,
+      })
+      .sort({ updatedAt: -1 })
+      .exec();
   }
 }

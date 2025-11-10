@@ -1,40 +1,32 @@
-import { IsString, IsNumber, IsEnum, IsNotEmpty, Min, Max, IsOptional } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, Min, Max } from 'class-validator'; // 移除 Trim 导入
 
-// 提交文章的参数校验规则（与前端表单字段一一对应）
 export class CreateArticleDto {
   @IsString()
   @IsNotEmpty({ message: '文章标题不能为空' })
-  title: string;
+  title: string; // 移除 @Trim()，Schema 层已配置 trim: true
 
   @IsString()
   @IsNotEmpty({ message: '作者不能为空' })
-  authors: string;
+  authors: string; // 移除 @Trim()
 
-  @IsNumber({ allowNaN: false }, { message: '出版年份必须是数字' })
-  @IsNotEmpty({ message: '出版年份不能为空' })
-  @Min(1990, { message: '出版年份不能早于1990年' })
-  @Max(new Date().getFullYear(), { message: '出版年份不能是未来年份' })
+  @IsNumber()
+  @Min(1900, { message: '出版年份不能早于1900年' })
+  @Max(new Date().getFullYear(), { message: '出版年份不能晚于当前年份' })
   year: number;
 
   @IsString()
-  @IsNotEmpty({ message: 'SE实践类型不能为空' })
-  practiceType: string;
+  @IsNotEmpty({ message: 'SE实践类型不能为空（如TDD、结对编程、持续集成）' })
+  practiceType: string; // 移除 @Trim()
 
   @IsString()
-  @IsNotEmpty({ message: '相关主张不能为空' })
-  claim: string;
+  @IsNotEmpty({ message: '核心主张不能为空' })
+  claim: string; // 移除 @Trim()
 
-  @IsEnum(['support', 'oppose', 'neutral'], {
-    message: '证据结果只能是 support（支持）、oppose（反对）、neutral（中立）',
-  })
-  @IsNotEmpty({ message: '证据结果不能为空' })
-  evidenceResult: 'support' | 'oppose' | 'neutral';
+  @IsString()
+  @IsNotEmpty({ message: '证据结果不能为空（支持/反对/中立）' })
+  evidenceResult: string; // 移除 @Trim()
 
   @IsString()
   @IsNotEmpty({ message: 'DOI不能为空' })
-  doi: string;
-
-  // 审核状态无需前端传入，后端默认设置为pending，所以标记为可选
-  @IsOptional()
-  reviewStatus?: 'pending' | 'approved' | 'rejected';
+  doi: string; // 移除 @Trim()
 }
