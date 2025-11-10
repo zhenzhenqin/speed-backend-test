@@ -8,6 +8,7 @@ import { Article } from './article.schema';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { UserRole } from '../user/user.schema';
+import { UpdateArticleAdminDto } from './dto/update-article-admin.dto';
 
 @ApiTags('文章管理')
 @Controller('articles')
@@ -31,14 +32,18 @@ export class ArticleController {
    * 2. 搜索已通过审核的文章（所有登录用户均可）
    */
   @Get('search')
+// 注意：如果需要「无权限搜索」，删除下面两行（@UseGuards和@Roles）
   @UseGuards(RolesGuard)
   @Roles(UserRole.USER, UserRole.MODERATOR, UserRole.ANALYST, UserRole.ADMIN)
   @ApiBearerAuth()
-  @ApiOperation({ summary: '搜索已通过审核的文章（需登录）' })
+  @ApiOperation({ summary: '搜索已通过审核的文章（支持排序）' })
   @ApiQuery({ name: 'practiceType', required: false, description: 'SE实践类型（如TDD、结对编程）' })
   @ApiQuery({ name: 'claim', required: false, description: '核心主张（模糊搜索）' })
   @ApiQuery({ name: 'yearStart', required: false, description: '出版年份起始' })
   @ApiQuery({ name: 'yearEnd', required: false, description: '出版年份结束' })
+// 新增排序参数注解
+  @ApiQuery({ name: 'sort', required: false, description: '排序字段（title/year/rating/updatedAt）', example: 'year' })
+  @ApiQuery({ name: 'order', required: false, description: '排序方向（asc/desc）', example: 'asc' })
   async search(@Query() searchDto: SearchArticleDto): Promise<Article[]> {
     return this.articleService.search(searchDto);
   }
@@ -124,5 +129,22 @@ export class ArticleController {
   @ApiOperation({ summary: '查询审核通过的待分析文章（仅分析师/管理员）' })
   async getPendingAnalyzeArticles(): Promise<Article[]> {
     return this.articleService.getPendingAnalyzeArticles();
+  }
+
+  /**
+   * 管理员修改文章所有字段（核心接口）
+   */
+  @Put('admin/:id')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN) // 仅管理员可访问
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '管理员修改文章所有字段（权限：仅管理员）' })
+  @ApiParam({ name: 'id', description: '文章ID' })
+  @ApiBody({ type: UpdateArticleAdminDto })
+  async updateArticleByAdmin(
+    @Param('id') id: string,
+    @Body() dto: UpdateArticleAdminDto,
+  ): Promise<Article> {
+    return this.articleService.updateArticleByAdmin(id, dto);
   }
 }
